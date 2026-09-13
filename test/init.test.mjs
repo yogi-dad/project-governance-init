@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { buildAgentsMd, knownAnswersFromAgents, recommendedCapabilities, updateAgentsMd } from '../bin/init.mjs';
+import { buildAgentsMd, knownAnswersFromAgents, recommendedCapabilities, suggestTooling, updateAgentsMd } from '../bin/init.mjs';
 
 const cli = join(process.cwd(), 'bin', 'init.mjs');
 
@@ -134,6 +134,37 @@ test('generated gaps reflect detected CI and scanners', () => {
   assert.match(output, /CI workflows detected/);
   assert.doesNotMatch(output, /No dependency vulnerability scanning detected/);
   assert.doesNotMatch(output, /No automated secret scanning detected/);
+});
+
+test('generated governance includes a git workflow section when .git is detected', () => {
+  const output = buildAgentsMd({ projectType: 'general', languages: [], packageManager: null, monorepo: false, commands: {}, ci: false, dependencyScanning: false, secretScanning: false, git: true }, {
+    description: 'Demo', users: 'users', success: 'outcome', criticalFlows: 'flow', deployment: 'ops', integrations: 'none', constraints: 'none', risks: 'none', sensitive: false, multiTenant: false,
+  });
+  assert.match(output, /## Git Workflow/);
+  assert.match(output, /Never commit secrets/);
+  assert.match(output, /feat\/.*fix\/.*hotfix\//);
+});
+
+test('generated governance flags missing .git instead of assuming version control', () => {
+  const output = buildAgentsMd({ projectType: 'general', languages: [], packageManager: null, monorepo: false, commands: {}, ci: false, dependencyScanning: false, secretScanning: false, git: false }, {
+    description: 'Demo', users: 'users', success: 'outcome', criticalFlows: 'flow', deployment: 'ops', integrations: 'none', constraints: 'none', risks: 'none', sensitive: false, multiTenant: false,
+  });
+  assert.match(output, /Run `git init`/);
+});
+
+test('tooling suggestions match detected signals and skip irrelevant ones', () => {
+  const suggestions = suggestTooling({ git: true, signals: ['database', 'payments'], projectType: 'api', languages: ['javascript/typescript'], commands: { test: 'test' }, dependencyScanning: true, errorMonitoring: true });
+  const names = suggestions.map((s) => s.name);
+  assert.ok(names.includes('github'));
+  assert.ok(names.includes('security-review'));
+  assert.ok(!names.includes('sentry'), 'should skip sentry suggestion when error monitoring is already present');
+  assert.ok(!names.includes('dependabot / renovate'), 'should skip dependency scanning suggestion when already configured');
+});
+
+test('marker update does not treat $-patterns in generated content as replace-string directives', () => {
+  const existing = 'Manual instructions\n\n<!-- project-governance-init:start -->\nold generated\n<!-- project-governance-init:end -->\n\nKeep this too.\n';
+  const updated = updateAgentsMd(existing, "<!-- project-governance-init:start -->\nBudget is $&, contact $' for approval.\n<!-- project-governance-init:end -->\n", 'markers');
+  assert.match(updated, /Budget is \$&, contact \$' for approval\./);
 });
 
 test('approved update replaces only the generated marker block', () => {

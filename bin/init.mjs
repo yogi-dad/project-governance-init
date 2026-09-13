@@ -12,6 +12,7 @@ const args = process.argv.slice(2);
 const dryRun = args.includes('--dry-run');
 const force = args.includes('--force');
 const reviewMode = args.includes('--review');
+const suggestToolsMode = args.includes('--suggest-tools');
 const START_MARKER = '<!-- project-governance-init:start -->';
 const END_MARKER = '<!-- project-governance-init:end -->';
 
@@ -235,6 +236,42 @@ function recommendedCapabilities(detected, answers = {}) {
   return ids.map((id) => ({ id, ...CAPABILITY_DEFINITIONS[id] }));
 }
 
+const TOOLING_SUGGESTIONS = [
+  { category: 'MCP', name: 'github', when: (d) => d.git, reason: 'repo is under git — an MCP server for issues/PRs saves manual gh-cli round-trips' },
+  { category: 'MCP', name: 'postgres / database connector', when: (d) => d.signals?.includes('database'), reason: 'database dependency detected — query/schema access without leaving the agent' },
+  { category: 'MCP', name: 'sentry', when: (d) => !d.errorMonitoring && ['web', 'api', 'mobile'].includes(d.projectType), reason: 'no error monitoring detected — useful once one is added' },
+  { category: 'Skill', name: 'security-review', when: (d) => d.signals?.some((s) => ['authentication', 'database', 'payments'].includes(s)), reason: 'auth/database/payments touch trust boundaries' },
+  { category: 'Skill', name: 'frontend-design / accessibility review', when: (d) => d.signals?.includes('ui') || ['web', 'mobile'].includes(d.projectType), reason: 'UI dependency or web/mobile project type detected' },
+  { category: 'Skill', name: 'test-coverage / tdd', when: (d) => Boolean(d.commands?.test), reason: 'a test command exists — worth enforcing coverage on changes' },
+  { category: 'Agent', name: 'react-reviewer / vue-reviewer (framework-specific)', when: (d) => d.signals?.includes('ui'), reason: 'a frontend framework dependency was detected' },
+  { category: 'Agent', name: 'python-reviewer', when: (d) => d.languages?.includes('python'), reason: 'Python source detected' },
+  { category: 'Agent', name: 'go-reviewer', when: (d) => d.languages?.includes('go'), reason: 'Go source detected' },
+  { category: 'Agent', name: 'rust-reviewer', when: (d) => d.languages?.includes('rust'), reason: 'Rust source detected' },
+  { category: 'Agent', name: 'typescript-reviewer', when: (d) => d.languages?.includes('javascript/typescript'), reason: 'JS/TS source detected' },
+  { category: 'Plugin', name: 'dependabot / renovate', when: (d) => !d.dependencyScanning, reason: 'no dependency-vulnerability scanning config found' },
+  { category: 'Plugin', name: 'husky + gitleaks (or equivalent pre-commit secret scanner)', when: (d) => !d.secretScanning, reason: 'no secret-scanning config found — catches leaked keys before they\'re committed' },
+  { category: 'Plugin', name: 'GitHub Actions CI workflow', when: (d) => d.git && !d.ci, reason: 'repo is under git but no CI workflow detected' },
+];
+
+function suggestTooling(detected) {
+  return TOOLING_SUGGESTIONS.filter((s) => s.when(detected));
+}
+
+function printToolingSuggestions(detected) {
+  const suggestions = suggestTooling(detected);
+  console.log('Suggested tooling (illustrative names — availability depends on your AI tool; not written to AGENTS.md)\n');
+  if (suggestions.length === 0) {
+    console.log('Nothing to suggest beyond what the standard capability checklist already covers.');
+    return;
+  }
+  for (const category of ['MCP', 'Skill', 'Agent', 'Plugin']) {
+    const inCategory = suggestions.filter((s) => s.category === category);
+    if (inCategory.length === 0) continue;
+    console.log(`${category}:`);
+    for (const s of inCategory) console.log(`- ${s.name} — ${s.reason}`);
+  }
+}
+
 function cmd(pm, script) {
   if (!script) return null;
   if (pm === 'pnpm') return `pnpm ${script}`;
@@ -343,6 +380,18 @@ function buildAgentsMd(detected, answers) {
     : '- No automated secret scanning detected — treat secret-scanning in stage 5 as manual until a pre-commit hook or CI step exists.');
   lines.push('');
 
+  if (detected.git) {
+    lines.push('## Git Workflow', '');
+    lines.push('- Commit in small, reviewable units with messages that explain why, not just what changed.');
+    lines.push('- Never commit secrets, keys, or credentials; check `git status`/`git diff` before staging.');
+    lines.push('- Name branches by type: `feat/`, `fix/`, `hotfix/`, `chore/`, `docs/` followed by a short slug (e.g. `feat/user-auth`).');
+    lines.push('- Do not force-push, rebase, or rewrite history on shared/main branches.');
+    lines.push('- Open a PR for review instead of pushing directly to the default branch, where the workflow supports it.');
+    lines.push('');
+  } else {
+    lines.push('## Git Workflow', '', 'No `.git` directory detected — this project is not under version control. Run `git init` before making changes so work is tracked and reversible.', '');
+  }
+
   lines.push('## Coding Conventions', '');
   lines.push('(Fill in: language style rules, where shared types/DTOs live, test file naming convention, any "never do X" domain rules.)', '');
 
@@ -355,7 +404,7 @@ function buildAgentsMd(detected, answers) {
 function updateAgentsMd(existing, generated, mode) {
   if (mode === 'replace') return generated;
   const block = new RegExp(`${START_MARKER}[\\s\\S]*?${END_MARKER}`);
-  if (block.test(existing)) return existing.replace(block, generated.trimEnd());
+  if (block.test(existing)) return existing.replace(block, () => generated.trimEnd());
   return `${existing.trimEnd()}\n\n${generated}`;
 }
 
@@ -409,6 +458,11 @@ function reviewExisting(detected) {
   if (detected.multiTenantSignal && !has('tenant') && !has('row-level security') && !has('rls')) {
     suggestions.push('Supabase detected but AGENTS.md doesn\'t mention tenant isolation / RLS — confirm whether this project is multi-tenant and document the review requirement if so.');
   }
+  if (!has('git workflow')) {
+    suggestions.push(detected.git
+      ? 'No Git Workflow section found — add commit, branching, and secret-handling guidance.'
+      : 'No `.git` directory detected and AGENTS.md doesn\'t flag it — recommend `git init` before relying on version control.');
+  }
   if (!detected.ci && !has('no ci')) {
     suggestions.push('No CI detected and AGENTS.md doesn\'t flag it as a known gap — add a note so agents don\'t assume gates are enforced automatically.');
   }
@@ -447,6 +501,11 @@ async function main() {
     return;
   }
 
+  if (suggestToolsMode) {
+    printToolingSuggestions(detected);
+    return;
+  }
+
   const agentsPath = join(cwd, 'AGENTS.md');
   let approvedExistingProjectWrite = false;
   let updateMode = null;
@@ -479,6 +538,7 @@ async function main() {
 
   const known = existsSync(agentsPath) ? knownAnswersFromAgents(readFileSync(agentsPath, 'utf8')) : {};
   const answers = await gatherAnswers(detected, known, interactionRl);
+  if (interactionRl) interactionRl.close();
   const agentsMd = buildAgentsMd(detected, answers);
 
   const files = {
@@ -511,4 +571,4 @@ async function main() {
 
 if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replaceAll('\\', '/'))) main();
 
-export { buildAgentsMd, knownAnswersFromAgents, recommendedCapabilities, updateAgentsMd };
+export { buildAgentsMd, knownAnswersFromAgents, recommendedCapabilities, suggestTooling, updateAgentsMd };
