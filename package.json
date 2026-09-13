@@ -6,8 +6,10 @@
   "bin": {
     "project-governance-init": "bin/init.mjs"
   },
+  "files": ["bin", "skills", "README.md"],
   "scripts": {
-    "start": "node bin/init.mjs"
+    "start": "node bin/init.mjs",
+    "test": "node --test"
   },
   "license": "MIT"
 }
