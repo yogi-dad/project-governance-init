@@ -1,0 +1,13 @@
+{
+  "name": "project-governance-init",
+  "version": "0.1.0",
+  "description": "Zero-dependency CLI that generates a portable AGENTS.md (plus CLAUDE.md/GEMINI.md pointers) with a repeatable subagent workflow: plan, delegate, review, UX/a11y, OWASP security, static checks, verification.",
+  "type": "module",
+  "bin": {
+    "project-governance-init": "bin/init.mjs"
+  },
+  "scripts": {
+    "start": "node bin/init.mjs"
+  },
+  "license": "MIT"
+}
