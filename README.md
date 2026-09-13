@@ -153,3 +153,7 @@ Small changes usually belong in `bin/init.mjs`:
 - Add a fixture test before changing detection or generated output.
 
 Keep recommendations evidence-based. If the tool cannot determine something from the repository, ask the user or mark it as unknown instead of guessing.
+
+## Feedback
+
+Have feedback, found a bug, or have an idea? [Open an issue](https://github.com/yogi-dad/project-governance-init/issues) and share your thoughts. For bugs, include the command you ran, expected behavior, actual behavior, and your Node.js version when relevant.
